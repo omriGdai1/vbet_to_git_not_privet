@@ -64,21 +64,22 @@ def aggregate_data(df,
                    time_window_timedeltas,
                    additional_suffix="",
                    time_col='TimestampHour'):
+    
+    # Create aggregation for each table per mapping and per timestamp_dict
+    # In addition, merge ftd_date and std_date to each df before aggregations
+    ## Manualy calculate for each model timestamp - here is std+4w
+
     aggregated_data_dict = {}
     for window_name in time_window_timedeltas.keys():
         window_size = time_window_timedeltas[window_name]
-        # window_start = current_time - window_size
-        # window_start = window_start.tz_localize(df[time_col].iloc[0].tz)
 
-        # Assuming the dataframes are named 'dates_df' and 'cube_CasinoSpins'
-
-        # Merge the two dataframes on 'ClientId'
+        # Merge ftd_date and std_date to df on client_id
         merged_df = pd.merge(df, dates_df, on="ClientId", how="inner")
-        time_after_FTD = time_window_timedeltas["1_month"]
-        # time_after_FTD = pd.to_timedelta("42D")
+        time_after_ftd_or_std = time_window_timedeltas["1_month"]
+        # time_after_ftd_or_std = pd.to_timedelta("42D")
         # Filter the rows based on the condition
-        filtered_df = merged_df[merged_df[time_col] <= merged_df['STD_date'] + time_after_FTD]
-        filtered_df =filtered_df[filtered_df[time_col] >= filtered_df['STD_date'] + time_after_FTD - window_size]
+        filtered_df = merged_df[merged_df[time_col] <= merged_df['STD_date'] + time_after_ftd_or_std]
+        filtered_df =filtered_df[filtered_df[time_col] >= filtered_df['STD_date'] + time_after_ftd_or_std - window_size]
 
         # If you want to keep only columns from 'cube_CasinoSpins' after filtering:
         filtered_df = filtered_df[df.columns]
@@ -154,25 +155,34 @@ while current_date <= end_date:
     timestamps[key] = current_date
     current_date += pd.Timedelta(weeks=1)
 
-
+# f.e. table create relevant aggs until current time based on the table.
+# On the end of agg extraction for each table - merge them all
 def process_data():
-    # cube_sportsbook_bet processing
+   
+   
+    # 1. cube_sportsbook_bet processing
+
     df = dataframes["cube_sportsbook_bet"]
     df = df[df["ClientId"].isin(relevant_clients)]
     columns_to_exclude_sportsbook = ['ReportDTS', 'TimestampHour', 'ClientId', 'PartnerId', 'SourceName', 'BetTypeName',
                                      'CurrencyId']
+    
+    # Create the aggregation per type ( sum, count and mean for bool)
     agg_dict = create_agg_dict(df, columns_to_exclude_sportsbook)
+    # Aggregate per time windows re
     final_aggregated_df = aggregate_data(df, agg_dict, time_window_timedeltas)
 
     print("Processed cube_sportsbook_bet.")
-    # cube_finance processing
+    
+    # 2.  cube_finance processing
     df = dataframes['cube_finance']
     df = df[df["ClientId"].isin(relevant_clients)]
     columns_to_exclude_finance = ['TimestampHour', 'ClientId', 'PartnerId', 'CurrencyId', 'Month']
     agg_dict = create_agg_dict(df, columns_to_exclude_finance)
     final_aggregated_df_cube_finance = aggregate_data(df, agg_dict, time_window_timedeltas)
     print(len(final_aggregated_df_cube_finance))
-    # cube_CasinoSpins processing
+   
+    # 3. cube_CasinoSpins processing
     df = dataframes['cube_CasinoSpins']
     df = df[df["ClientId"].isin(relevant_clients)]
     columns_to_exclude_casino = [
@@ -182,6 +192,8 @@ def process_data():
     ]
     agg_dict = create_agg_dict(df, columns_to_exclude_casino)
     final_aggregated_df_cube_CasinoSpins = pd.DataFrame()
+    # Create spins and filter, one time if bonus is true, one time if bonus is false, one time isRakeTransaction true or false.
+    # Omeri thinks Rake is if transaction was cancelled
     for column, value in [('IsBonus', True), ('IsBonus', False), ('IsRakeTransaction', True),
                           ('IsRakeTransaction', False)]:
         filtered_df = df[df[column] == value]
@@ -192,6 +204,8 @@ def process_data():
         else:
             final_aggregated_df_cube_CasinoSpins = pd.merge(final_aggregated_df_cube_CasinoSpins, aggregated_df,
                                                             on='ClientId', how='outer')
+    
+    # 4. client session
     print(len(final_aggregated_df_cube_CasinoSpins))
     df_client_session = dataframes['ClientSession']
     df_client_session = df_client_session[df_client_session["ClientId"].isin(relevant_clients)]
@@ -212,11 +226,13 @@ def process_data():
                                                         time_window_timedeltas,
                                                         time_col='StartTime')
 
+    # 5. cube_sportsbook_bet_selection
     df = dataframes["cube_sportsbook_bet"]
     columns_to_exclude_selection = ['TimestampHour', 'ClientId', 'PartnerId', 'SourceName', 'BetTypeName', 'CurrencyId']
     agg_dict = create_agg_dict(df, columns_to_exclude_selection)
     final_aggregated_df_cube_sportsbook_bet_selection = aggregate_data(df, agg_dict, time_window_timedeltas)
 
+    # 6. viewmat_ClientDetails
     final_combined_df = dataframes['viewmat_ClientDetails'].merge(final_aggregated_df, on='ClientId', how='left')
     final_combined_df = final_combined_df.merge(final_aggregated_df_cube_finance, on='ClientId', how='left')
     final_combined_df = final_combined_df.merge(final_aggregated_df_cube_CasinoSpins, on='ClientId', how='left')
@@ -227,6 +243,9 @@ def process_data():
     final_combined_df = final_combined_df[final_combined_df["ClientId"].isin(relevant_clients)]
     print(len(final_combined_df))
     print("All dataframes merged successfully.")
+
+    #  Save final agg - Write back to s3 or locally
+
 
     with open('/Users/omrilapidot/Vbet_adjusted_data/test/final_combined_df_1_month_after_STD.pkl', 'wb') as f:
         pickle.dump(final_combined_df, f)
@@ -239,5 +258,6 @@ def process_data():
 
 
 # for time_name, time_value in timestamps.items():
+model_name = "std+4weeks" # Not in use
 process_data()
 print(f"Processed and saved for.")
