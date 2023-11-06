@@ -1,0 +1,5 @@
+pandas
+numpy
+pickle5
+boto3
+Python-IO
