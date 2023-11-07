@@ -1,3 +1,6 @@
+# Sample parser from json to df.
+# TODO: Add main loop to iterate through all tables for each subdir
+
 subdir_path = "/Users/omrilapidot/Vbet_data/cube_sportsbook_bet"
 json_files = [f for f in os.listdir(subdir_path) if f.endswith('.json')]
 
